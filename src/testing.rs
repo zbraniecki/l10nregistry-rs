@@ -17,6 +17,7 @@ pub struct RegistrySetup {
 
 pub struct FileSource {
     pub name: String,
+    pub metasource: String,
     pub locales: Vec<LanguageIdentifier>,
     pub path_scheme: String,
 }
@@ -28,6 +29,24 @@ impl FileSource {
     {
         Self {
             name: name.to_string(),
+            metasource: String::default(),
+            locales,
+            path_scheme: path_scheme.to_string(),
+        }
+    }
+
+    pub fn new_with_metasource<S>(
+        name: S,
+        metasource: S,
+        locales: Vec<LanguageIdentifier>,
+        path_scheme: S,
+    ) -> Self
+    where
+        S: ToString,
+    {
+        Self {
+            name: name.to_string(),
+            metasource: metasource.to_string(),
             locales,
             path_scheme: path_scheme.to_string(),
         }
@@ -122,6 +141,22 @@ impl TestFileFetcher {
         crate::source::FileSource::new(name.to_string(), locales, path.to_string(), self.clone())
     }
 
+    pub fn get_test_file_source_with_metasource(
+        &self,
+        name: &str,
+        metasource: &str,
+        locales: Vec<LanguageIdentifier>,
+        path: &str,
+    ) -> crate::source::FileSource {
+        crate::source::FileSource::new_with_metasource(
+            name.to_string(),
+            metasource.to_string(),
+            locales,
+            path.to_string(),
+            self.clone(),
+        )
+    }
+
     pub fn get_test_file_source_with_index(
         &self,
         name: &str,
@@ -160,8 +195,12 @@ impl TestFileFetcher {
             .file_sources
             .into_iter()
             .map(|source| {
-                let mut s =
-                    self.get_test_file_source(&source.name, source.locales, &source.path_scheme);
+                let mut s = self.get_test_file_source_with_metasource(
+                    &source.name,
+                    &source.metasource,
+                    source.locales,
+                    &source.path_scheme,
+                );
                 s.set_reporter(provider.clone());
                 s
             })

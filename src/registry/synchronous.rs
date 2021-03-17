@@ -10,6 +10,7 @@ use unic_langid::LanguageIdentifier;
 impl<'a> L10nRegistryLocked<'a> {
     pub(crate) fn bundle_from_order<P>(
         &self,
+        metasource: usize,
         locale: LanguageIdentifier,
         source_order: &[usize],
         res_ids: &[String],
@@ -27,7 +28,7 @@ impl<'a> L10nRegistryLocked<'a> {
         let mut errors = vec![];
 
         for (&source_idx, path) in source_order.iter().zip(res_ids.iter()) {
-            let source = self.source_idx(source_idx);
+            let source = self.source_idx(metasource, source_idx);
             if let Some(res) = source.fetch_file_sync(&locale, path, false) {
                 if let Err(err) = bundle.add_resource(res) {
                     errors.extend(err.into_iter().map(|error| L10nRegistryError::FluentError {
@@ -113,6 +114,7 @@ impl State {
 pub struct GenerateBundlesSync<P> {
     reg: L10nRegistry<P>,
     locales: std::vec::IntoIter<LanguageIdentifier>,
+    current_metasource: usize,
     res_ids: Vec<String>,
     state: State,
 }
@@ -126,6 +128,7 @@ impl<P> GenerateBundlesSync<P> {
         Self {
             reg,
             locales,
+            current_metasource: 0,
             res_ids,
             state: State::Empty,
         }
@@ -138,7 +141,7 @@ impl<P> SyncTester for GenerateBundlesSync<P> {
         let res = &self.res_ids[res_idx];
         self.reg
             .lock()
-            .source_idx(source_idx)
+            .source_idx(self.current_metasource, source_idx)
             .fetch_file_sync(locale, res, false)
             .is_some()
     }
@@ -165,7 +168,10 @@ where
         }
 
         if let Some(locale) = self.locales.next() {
-            let mut solver = SerialProblemSolver::new(self.res_ids.len(), self.reg.lock().len());
+            let mut solver = SerialProblemSolver::new(
+                self.res_ids.len(),
+                self.reg.lock().len(self.current_metasource),
+            );
             self.state = State::Locale(locale.clone());
             if let Err(idx) = solver.try_next(self, true) {
                 self.reg
@@ -195,8 +201,9 @@ where
                     Ok(Some(order)) => {
                         let locale = self.state.get_locale();
                         let bundle = self.reg.lock().bundle_from_order(
+                            self.current_metasource,
                             locale.clone(),
-                            order,
+                            &order,
                             &self.res_ids,
                             &self.reg.shared.provider,
                         );
@@ -220,8 +227,31 @@ where
                 self.state = State::Empty;
             }
 
+            if let State::Solver {
+                locale: _,
+                solver: _,
+            } = self.state
+            {
+                if self.current_metasource > 0 {
+                    self.current_metasource -= 1;
+                    let solver = SerialProblemSolver::new(
+                        self.res_ids.len(),
+                        self.reg.lock().len(self.current_metasource),
+                    );
+                    self.state = State::Solver {
+                        locale: self.state.get_locale().clone(),
+                        solver,
+                    };
+                    continue;
+                }
+            }
+
             let locale = self.locales.next()?;
-            let solver = SerialProblemSolver::new(self.res_ids.len(), self.reg.lock().len());
+            self.current_metasource = self.reg.lock().metasources_len() - 1;
+            let solver = SerialProblemSolver::new(
+                self.res_ids.len(),
+                self.reg.lock().len(self.current_metasource),
+            );
             self.state = State::Solver { locale, solver };
         }
     }
